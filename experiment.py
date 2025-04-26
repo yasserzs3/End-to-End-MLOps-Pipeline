@@ -12,7 +12,7 @@ from train_utils import train_one_epoch, validate
 # Configurable constants can be passed as arguments if needed
 
 def run_experiment(transform_name, train_transform, val_transform, model_name='simple_cnn',
-                   data_dir='data/images', csv_path='data/train.csv', img_size=128, batch_size=32, epochs=10, lr=1e-3, num_classes=2):
+                   data_dir='data/images', csv_path='data/train.csv', img_size=128, batch_size=32, epochs=10, lr=1e-3, num_classes=2, freeze_backbone=False):
     # Data
     df = pd.read_csv(csv_path)
     train_df, val_df = train_test_split(df, test_size=0.2, stratify=df['label'], random_state=42)
@@ -22,7 +22,7 @@ def run_experiment(transform_name, train_transform, val_transform, model_name='s
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = get_model(model_name, num_classes=num_classes, img_size=img_size).to(device)
+    model = get_model(model_name, num_classes=num_classes, img_size=img_size, freeze_backbone=freeze_backbone).to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -33,6 +33,7 @@ def run_experiment(transform_name, train_transform, val_transform, model_name='s
         mlflow.log_param('epochs', epochs)
         mlflow.log_param('learning_rate', lr)
         mlflow.log_param('model', model_name)
+        mlflow.log_param('freeze_backbone', freeze_backbone)
         best_val_acc = 0
         for epoch in range(epochs):
             train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)

@@ -11,7 +11,7 @@ DEFAULT_LR = 1e-3
 EXPERIMENT_NAME = 'cnn_image_classification'
 
 TRANSFORM_OPTIONS = ['raw', 'transformed', 'augmented']
-MODEL_OPTIONS = ['simple_cnn', 'resnet18']
+MODEL_OPTIONS = ['simple_cnn', 'resnet18', 'resnet18_backbone']
 
 def get_transform(transform_type, img_size):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=DEFAULT_LR, help='Learning rate')
     parser.add_argument('--img-size', type=int, default=DEFAULT_IMG_SIZE, help='Image size (height and width)')
+    parser.add_argument('--freeze-backbone', action='store_true', help='Freeze backbone when using resnet18_backbone')
     args = parser.parse_args()
 
     mlflow.set_experiment(EXPERIMENT_NAME)
@@ -66,5 +67,6 @@ if __name__ == '__main__':
             batch_size=args.batch_size,
             epochs=args.epochs,
             lr=args.lr,
-            img_size=args.img_size
+            img_size=args.img_size,
+            freeze_backbone=args.freeze_backbone
         ) 
