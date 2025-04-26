@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader
 import torch
 import mlflow
 import mlflow.pytorch
+from sklearn.metrics import roc_auc_score
+import numpy as np
 
 from datasets import ImageCSVDataset
 from models import get_model
@@ -26,6 +28,9 @@ def run_experiment(transform_name, train_transform, val_transform, model_name='s
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+    best_val_acc = 0
+    best_model_state = None
+
     with mlflow.start_run(run_name=f"{model_name}_{transform_name}"):
         mlflow.log_param('transform', transform_name)
         mlflow.log_param('img_size', img_size)
@@ -34,15 +39,50 @@ def run_experiment(transform_name, train_transform, val_transform, model_name='s
         mlflow.log_param('learning_rate', lr)
         mlflow.log_param('model', model_name)
         mlflow.log_param('freeze_backbone', freeze_backbone)
-        best_val_acc = 0
         for epoch in range(epochs):
             train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
             val_loss, val_acc = validate(model, val_loader, criterion, device)
+
+            # ROC-AUC calculation
+            model.eval()
+            all_labels = []
+            all_probs = []
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images = images.to(device)
+                    outputs = model(images)
+                    probs = torch.softmax(outputs, dim=1).cpu().numpy()
+                    all_probs.append(probs)
+                    all_labels.append(labels.cpu().numpy())
+            all_probs = np.concatenate(all_probs, axis=0)
+            all_labels = np.concatenate(all_labels, axis=0)
+            try:
+                if num_classes == 2:
+                    roc_auc = roc_auc_score(all_labels, all_probs[:, 1])
+                else:
+                    roc_auc = roc_auc_score(all_labels, all_probs, multi_class='ovr')
+                mlflow.log_metric('val_roc_auc', roc_auc, step=epoch)
+            except ValueError:
+                # This can happen if only one class is present in y_true
+                roc_auc = float('nan')
+
             mlflow.log_metric('train_loss', train_loss, step=epoch)
             mlflow.log_metric('train_acc', train_acc, step=epoch)
             mlflow.log_metric('val_loss', val_loss, step=epoch)
             mlflow.log_metric('val_acc', val_acc, step=epoch)
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} | Val ROC-AUC: {roc_auc:.4f}")
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
-                mlflow.pytorch.log_model(model, 'model') 
+                best_model_state = model.state_dict()
+                mlflow.pytorch.log_model(model, 'model')
+        # Save the best model weights locally
+        if best_model_state is not None:
+            torch.save(best_model_state, 'best_model.pth')
+
+        # Other metrics you can track (examples):
+        # - Precision, Recall, F1-score (per epoch or at the end)
+        # - Confusion matrix (as an artifact)
+        # - ROC-AUC (for binary/multiclass)
+        # - Learning rate (if using a scheduler)
+        # - Per-class accuracy
+        # - Inference time, model size, etc. 
