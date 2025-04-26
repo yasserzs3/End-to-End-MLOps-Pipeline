@@ -173,4 +173,36 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-data/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# MLflow artifacts and logs
+mlruns/
+mlartifacts/
+
+# Data (ignore all CSVs and images)
+data/images/
+data/test.csv
+data/train.csv
+data/sample_submission.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# VSCode
+.vscode/
