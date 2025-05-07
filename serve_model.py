@@ -10,6 +10,7 @@ import torchvision.transforms as transforms
 from pydantic import BaseModel
 import uvicorn
 import os
+from monitoring import ModelMonitor
 
 app = FastAPI(
     title="Image Classification API",
@@ -21,6 +22,7 @@ app = FastAPI(
 model = None
 transform = None
 device = None
+monitor = ModelMonitor()
 
 class PredictionResponse(BaseModel):
     prediction: int
@@ -122,6 +124,22 @@ async def predict(file: UploadFile = File(...)):
         # Map prediction to class name (you might want to load this from a config file)
         class_names = {0: "class_0", 1: "class_1"}  # Update with your actual class names
         
+        # Log prediction for monitoring
+        monitor.log_prediction(
+            prediction=prediction,
+            confidence=confidence,
+            features={"filename": file.filename}
+        )
+        
+        # Check for drift
+        drift_indicators = monitor.detect_drift()
+        if drift_indicators['drift_detected']:
+            monitor.generate_alert(
+                alert_type="DRIFT_DETECTED",
+                message=f"Model drift detected: {', '.join(drift_indicators['reasons'])}",
+                severity="WARNING"
+            )
+        
         return PredictionResponse(
             prediction=prediction,
             confidence=confidence,
@@ -135,6 +153,18 @@ async def predict(file: UploadFile = File(...)):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "model_loaded": model is not None}
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get current model performance metrics."""
+    metrics = monitor.calculate_metrics()
+    return metrics
+
+@app.get("/alerts")
+async def get_alerts(limit: int = 10):
+    """Get recent alerts."""
+    alerts = monitor.get_recent_alerts(limit=limit)
+    return alerts.to_dict(orient='records')
 
 if __name__ == "__main__":
     # Run the FastAPI application
