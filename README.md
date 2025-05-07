@@ -1,132 +1,133 @@
-# CNN Image Classification Pipeline with PyTorch & MLflow
+# MLOps Project: Image Classification with MLflow
 
-This project provides a modular pipeline for image classification using PyTorch, with experiment tracking via MLflow. The codebase is organized for easy extension to new models (e.g., ResNet, ViT) and data augmentations.
+This project implements a complete MLOps pipeline for image classification, featuring experiment tracking, model training, hyperparameter tuning, model serving, and monitoring.
 
-## Directory Structure
+## Features
 
+### 1. Experiment Tracking
+- MLflow integration for experiment tracking
+- Comprehensive metric logging
+- Parameter tracking and visualization
+- Artifact management
+
+### 2. Model Training and Tuning
+- Automated hyperparameter tuning with Hyperopt
+- K-fold cross-validation
+- Early stopping implementation
+- Model checkpointing
+
+### 3. Model Deployment
+- FastAPI-based model serving
+- RESTful API endpoints
+- Input validation and error handling
+- Automatic model loading from registry
+
+### 4. Performance Monitoring
+- Real-time prediction logging
+- Performance metric calculation
+- Drift detection
+- Alert system for model degradation
+
+### 5. Model Registry
+- MLflow Model Registry integration
+- Version control for models
+- Stage management (Staging, Production, Archived)
+- Model comparison capabilities
+
+## Setup
+
+1. Create a virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
-.
-├── data/
-│   ├── images/                # All image files (JPEG)
-│   ├── train.csv              # Training image IDs and labels
-│   ├── test.csv               # Test image IDs
-│   └── sample_submission.csv  # Submission format example
-├── datasets.py                # Custom PyTorch Dataset
-├── models.py                  # Model definitions and factory
-├── train_utils.py             # Training and validation loops
-├── experiment.py              # MLflow experiment runner
-├── train_cnn.py               # Main script to launch experiments
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
-```
 
-## Requirements
-
-- Python 3.7+
-- PyTorch
-- torchvision
-- pandas
-- numpy
-- scikit-learn
-- Pillow
-- tqdm
-- matplotlib
-- mlflow
-
-Install dependencies:
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
+3. Start MLflow tracking server:
+```bash
+mlflow server --host 0.0.0.0 --port 5000
+```
+
 ## Usage
 
-### 1. Prepare Data
-- Place your images in `data/images/`.
-- Ensure `data/train.csv` contains columns: `img_id`, `label` (without `.jpeg` in `img_id`).
-
-### 2. Run Training Experiments
-
-You can now control the model, data transform, batch size, epochs, learning rate, and image size from the command line:
-
+### Training and Tuning
 ```bash
-python train_cnn.py [--model MODEL] [--transform TRANSFORM] [--batch-size BATCH_SIZE] [--epochs EPOCHS] [--lr LEARNING_RATE] [--img-size IMG_SIZE] [--freeze-backbone]
+# Run hyperparameter tuning
+python hyperopt_tuning.py
+
+# Train model with specific parameters
+python train_cnn.py
 ```
 
-#### Model Options
-- `simple_cnn`: A small custom convolutional neural network.
-- `resnet18`: The full ResNet18 architecture from torchvision, with the final layer replaced for your number of classes. Trains the entire model end-to-end.
-- `resnet18_backbone`: Uses ResNet18 as a feature extractor (backbone) and adds a custom head (`Linear -> ReLU -> Linear`).
-  - You can freeze the backbone (so only the head is trained) by adding the `--freeze-backbone` flag.
-
-#### CLI Options
-- `--model`: Model architecture to use (`simple_cnn`, `resnet18`, `resnet18_backbone`). Default: `simple_cnn`.
-- `--transform`: Data transform to use (`raw`, `transformed`, `augmented`, `all`). Default: `all` (runs all three).
-- `--batch-size`: Batch size for training. Default: 32
-- `--epochs`: Number of training epochs. Default: 10
-- `--lr`: Learning rate. Default: 0.001
-- `--img-size`: Image size (height and width). Default: 128
-- `--freeze-backbone`: (Only for `resnet18_backbone`) Freeze the backbone and train only the custom head.
-
-#### Example Usage
-
-- Train all transforms with the default model:
-  ```bash
-  python train_cnn.py
-  ```
-- Train only with augmented data:
-  ```bash
-  python train_cnn.py --transform augmented
-  ```
-- Train ResNet18 with normalized data:
-  ```bash
-  python train_cnn.py --model resnet18 --transform transformed
-  ```
-- Train ResNet18 as a backbone (custom head, trainable):
-  ```bash
-  python train_cnn.py --model resnet18_backbone
-  ```
-- Train ResNet18 as a backbone (custom head, frozen backbone):
-  ```bash
-  python train_cnn.py --model resnet18_backbone --freeze-backbone
-  ```
-- Custom batch size and epochs:
-  ```bash
-  python train_cnn.py --batch-size 64 --epochs 20
-  ```
-- Custom learning rate and image size:
-  ```bash
-  python train_cnn.py --lr 0.0005 --img-size 224
-  ```
-- All options together:
-  ```bash
-  python train_cnn.py --model resnet18_backbone --transform augmented --batch-size 16 --epochs 30 --lr 0.0001 --img-size 256 --freeze-backbone
-  ```
-
-All options and results are logged to MLflow.
-
-### 3. View MLflow Results
-
-Start the MLflow UI:
+### Model Serving
 ```bash
-mlflow ui
+# Start the FastAPI server
+python serve_model.py
 ```
-Then open [http://localhost:5000](http://localhost:5000) in your browser.
 
-## Adding New Models
+The API will be available at `http://localhost:8000` with the following endpoints:
+- `/predict`: Make predictions on images
+- `/health`: Check service health
+- `/metrics`: View performance metrics
+- `/alerts`: View recent alerts
+- `/model-info`: Get information about the current model
 
-1. **Edit `models.py`:**
-   - Add your new model class.
-   - Update the `get_model` function to return your model when its name is passed.
-2. **Edit `train_cnn.py`:**
-   - Change the `model_name` argument in the `run_experiment` call to your new model's name.
-
-Example (for ResNet18 as backbone):
+### Model Registry
 ```python
-run_experiment(name, t, transformed_transform, model_name='resnet18_backbone', freeze_backbone=True)
+from model_registry import ModelRegistry
+
+# Initialize registry
+registry = ModelRegistry()
+
+# Register best model
+version = registry.register_best_model(
+    experiment_name="hyperopt_tuning",
+    metric="mean_cv_accuracy"
+)
+
+# Transition to production
+registry.transition_model_stage(version, "Production")
 ```
 
-## Customizing Transforms
-- Edit the transform pipelines in `train_cnn.py` to add/remove augmentations or normalization as needed.
+### Monitoring
+```python
+from monitoring import ModelMonitor
+
+# Initialize monitor
+monitor = ModelMonitor()
+
+# View metrics
+metrics = monitor.calculate_metrics()
+
+# Check for drift
+drift = monitor.detect_drift()
+
+# Plot metrics
+monitor.plot_metrics('accuracy')
+```
+
+## Project Structure
+```
+.
+├── hyperopt_tuning.py    # Hyperparameter tuning implementation
+├── train_cnn.py         # Model training script
+├── serve_model.py       # FastAPI model serving
+├── model_registry.py    # MLflow Model Registry integration
+├── monitoring.py        # Performance monitoring system
+├── requirements.txt     # Project dependencies
+└── README.md           # Project documentation
+```
+
+## Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
-MIT 
+This project is licensed under the MIT License - see the LICENSE file for details. 
