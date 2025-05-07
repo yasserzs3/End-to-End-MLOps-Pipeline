@@ -10,7 +10,7 @@ import pandas as pd
 from datasets import ImageCSVDataset
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from models import get_model
-from train_cnn import train_one_epoch, validate
+from training_utils import train_one_epoch, validate
 
 # Define the search space for hyperparameters
 space = {

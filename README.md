@@ -181,12 +181,21 @@ monitor.plot_metrics('accuracy')
 .
 ├── hyperopt_tuning.py    # Hyperparameter tuning implementation
 ├── train_cnn.py         # Model training script
+├── experiment.py        # Experiment tracking and execution
+├── training_utils.py    # Core training and validation functions
 ├── serve_model.py       # FastAPI model serving
 ├── model_registry.py    # MLflow Model Registry integration
 ├── monitoring.py        # Performance monitoring system
 ├── requirements.txt     # Project dependencies
 └── README.md           # Project documentation
 ```
+
+### Code Organization
+The project follows a modular design pattern:
+- `training_utils.py`: Contains core training functions (`train_one_epoch` and `validate`) used across different modules
+- `experiment.py`: Manages experiment execution and MLflow tracking
+- `train_cnn.py`: Handles model training with configurable parameters
+- `hyperopt_tuning.py`: Implements hyperparameter optimization
 
 ## Contributing
 1. Fork the repository

@@ -11,7 +11,7 @@ import io
 
 from datasets import ImageCSVDataset
 from models import get_model
-from train_cnn import train_one_epoch, validate
+from training_utils import train_one_epoch, validate
 
 # Configurable constants can be passed as arguments if needed
 
