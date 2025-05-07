@@ -4,8 +4,10 @@ from torch.utils.data import DataLoader
 import torch
 import mlflow
 import mlflow.pytorch
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
 import numpy as np
+import matplotlib.pyplot as plt
+import io
 
 from datasets import ImageCSVDataset
 from models import get_model
@@ -78,6 +80,44 @@ def run_experiment(transform_name, train_transform, val_transform, model_name='s
         # Save the best model weights locally
         if best_model_state is not None:
             torch.save(best_model_state, 'best_model.pth')
+
+        # Calculate and log additional metrics at the end of training
+        model.eval()
+        all_preds = []
+        all_labels = []
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images = images.to(device)
+                outputs = model(images)
+                _, preds = torch.max(outputs, 1)
+                all_preds.append(preds.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+        all_preds = np.concatenate(all_preds, axis=0)
+        all_labels = np.concatenate(all_labels, axis=0)
+
+        # Calculate precision, recall, F1-score
+        precision = precision_score(all_labels, all_preds, average='weighted')
+        recall = recall_score(all_labels, all_preds, average='weighted')
+        f1 = f1_score(all_labels, all_preds, average='weighted')
+
+        mlflow.log_metric('val_precision', precision)
+        mlflow.log_metric('val_recall', recall)
+        mlflow.log_metric('val_f1', f1)
+
+        # Calculate and log confusion matrix
+        cm = confusion_matrix(all_labels, all_preds)
+        plt.figure(figsize=(10, 8))
+        plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+        plt.title('Confusion Matrix')
+        plt.colorbar()
+        plt.tight_layout()
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        mlflow.log_image(buf, 'confusion_matrix.png')
+        plt.close()
 
         # Other metrics you can track (examples):
         # - Precision, Recall, F1-score (per epoch or at the end)

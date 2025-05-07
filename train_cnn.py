@@ -2,6 +2,8 @@ import mlflow
 import argparse
 import torchvision.transforms as transforms
 from experiment import run_experiment
+import os
+import subprocess
 
 # Config
 DEFAULT_IMG_SIZE = 128
@@ -49,6 +51,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     mlflow.set_experiment(EXPERIMENT_NAME)
+
+    # Log the current state of the project directory
+    mlflow.log_artifacts(os.getcwd(), 'code')
+
+    # Log the Python environment
+    pip_freeze = subprocess.check_output(['pip', 'freeze']).decode('utf-8')
+    mlflow.log_dict({'pip_freeze': pip_freeze}, 'environment.txt')
 
     if args.transform == 'all':
         transform_names = TRANSFORM_OPTIONS
