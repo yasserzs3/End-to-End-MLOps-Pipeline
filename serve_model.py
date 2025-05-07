@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import uvicorn
 import os
 from monitoring import ModelMonitor
+from model_registry import ModelRegistry
 
 app = FastAPI(
     title="Image Classification API",
@@ -23,6 +24,7 @@ model = None
 transform = None
 device = None
 monitor = ModelMonitor()
+registry = ModelRegistry()
 
 class PredictionResponse(BaseModel):
     prediction: int
@@ -30,41 +32,29 @@ class PredictionResponse(BaseModel):
     class_name: str
 
 def load_model():
-    """Load the best model from MLflow."""
+    """Load the best model from MLflow Model Registry."""
     global model, transform, device
     
     try:
-        # Get the best run from the hyperopt_tuning experiment
-        experiment = mlflow.get_experiment_by_name("hyperopt_tuning")
-        if experiment is None:
-            raise ValueError("No hyperopt_tuning experiment found")
+        # Load model from registry
+        model = registry.load_model(stage="Production")
         
-        # Get the best run based on mean_cv_accuracy
-        runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
-        best_run = runs.loc[runs['metrics.mean_cv_accuracy'].idxmax()]
-        
-        # Load the model
-        model_uri = f"runs:/{best_run.run_id}/model"
-        model = mlflow.pytorch.load_model(model_uri)
-        
-        # Set up device and transform
+        # Set up device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(device)
         model.eval()
         
-        # Get the image size from the run parameters
-        img_size = int(best_run['params.img_size'])
+        # Get model details
+        model_details = registry.get_model_details()
+        print(f"Loaded model version {model_details['version']} from {model_details['stage']} stage")
         
-        # Create transform
+        # Create transform (using standard ImageNet normalization)
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         transform = transforms.Compose([
-            transforms.Resize((img_size, img_size)),
+            transforms.Resize((224, 224)),  # Standard ImageNet size
             transforms.ToTensor(),
             normalize,
         ])
-        
-        print(f"Model loaded successfully from run {best_run.run_id}")
-        print(f"Model parameters: {best_run['params']}")
         
     except Exception as e:
         print(f"Error loading model: {str(e)}")
@@ -165,6 +155,15 @@ async def get_alerts(limit: int = 10):
     """Get recent alerts."""
     alerts = monitor.get_recent_alerts(limit=limit)
     return alerts.to_dict(orient='records')
+
+@app.get("/model-info")
+async def get_model_info():
+    """Get information about the currently loaded model."""
+    try:
+        model_details = registry.get_model_details()
+        return model_details
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     # Run the FastAPI application
