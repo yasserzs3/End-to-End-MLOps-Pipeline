@@ -10,11 +10,53 @@ This project implements a complete MLOps pipeline for image classification, feat
 - Parameter tracking and visualization
 - Artifact management
 
+#### Tracked Metrics
+- **Training Metrics**:
+  - Loss (training and validation)
+  - Accuracy (training and validation)
+  - Learning rate
+  - Batch processing time
+  - Epoch duration
+- **Model Performance Metrics**:
+  - Precision (weighted average)
+  - Recall (weighted average)
+  - F1-score (weighted average)
+  - Confusion matrix
+- **Resource Metrics**:
+  - GPU memory usage
+  - CPU utilization
+  - Training time per epoch
+  - Total training duration
+
 ### 2. Model Training and Tuning
 - Automated hyperparameter tuning with Hyperopt
 - K-fold cross-validation
 - Early stopping implementation
 - Model checkpointing
+
+#### Hyperparameter Search Space
+- **Model Architecture**:
+  - Learning rate: [1e-5, 1e-3] (log scale)
+  - Batch size: [16, 32, 64, 128]
+  - Number of epochs: [10, 50]
+  - Image size: [128, 224, 256]
+  - Model type: ['simple_cnn', 'resnet18', 'resnet18_backbone']
+- **Optimization**:
+  - Optimizer: ['adam', 'sgd']
+  - Weight decay: [0, 1e-4, 1e-3]
+  - Momentum (for SGD): [0.9, 0.99]
+- **Regularization**:
+  - Dropout rate: [0.1, 0.5]
+  - Data augmentation intensity: [0.1, 0.5]
+- **Early Stopping**:
+  - Patience: [3, 10]
+  - Min delta: [1e-4, 1e-3]
+
+#### Cross-Validation Strategy
+- 5-fold cross-validation
+- Stratified sampling for balanced folds
+- Validation metrics averaged across folds
+- Best model selection based on mean validation accuracy
 
 ### 3. Model Deployment
 - FastAPI-based model serving
@@ -27,6 +69,30 @@ This project implements a complete MLOps pipeline for image classification, feat
 - Performance metric calculation
 - Drift detection
 - Alert system for model degradation
+
+#### Drift Detection Methodology
+- **Performance Drift**:
+  - Window size: 1000 predictions
+  - Threshold: 0.05 (5% degradation)
+  - Metrics monitored:
+    - Accuracy drift
+    - Confidence distribution drift
+    - Prediction distribution drift
+
+- **Statistical Tests**:
+  - Kolmogorov-Smirnov test for distribution changes
+  - Chi-square test for categorical drift
+  - Z-score for mean shift detection
+
+- **Alert Thresholds**:
+  - Warning: > 5% degradation
+  - Critical: > 10% degradation
+  - Immediate action: > 20% degradation
+
+- **Monitoring Windows**:
+  - Short-term: Last 1000 predictions
+  - Medium-term: Last 10000 predictions
+  - Long-term: All predictions
 
 ### 5. Model Registry
 - MLflow Model Registry integration
