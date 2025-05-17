@@ -191,11 +191,7 @@ ENV/
 mlruns/
 mlartifacts/
 
-# Data (ignore all CSVs and images)
-data/images/
-data/test.csv
-data/train.csv
-data/sample_submission.csv
+
 
 # OS files
 .DS_Store
