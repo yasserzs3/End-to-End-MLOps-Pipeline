@@ -30,7 +30,7 @@ This project implements a complete MLOps pipeline for image classification, feat
 
 ### 2. Model Training and Tuning
 - Automated hyperparameter tuning with Hyperopt
-- K-fold cross-validation
+- Simple train/validation split
 - Early stopping implementation
 - Model checkpointing
 
@@ -39,7 +39,7 @@ This project implements a complete MLOps pipeline for image classification, feat
   - Learning rate: [1e-5, 1e-3] (log scale)
   - Batch size: [16, 32, 64, 128]
   - Number of epochs: [10, 50]
-  - Image size: [128, 224, 256]
+  - Image size: [96, 128, 224]
   - Model type: ['simple_cnn', 'resnet18', 'resnet18_backbone']
 - **Optimization**:
   - Optimizer: ['adam', 'sgd']
@@ -52,47 +52,61 @@ This project implements a complete MLOps pipeline for image classification, feat
   - Patience: [3, 10]
   - Min delta: [1e-4, 1e-3]
 
-#### Cross-Validation Strategy
-- 5-fold cross-validation
-- Stratified sampling for balanced folds
-- Validation metrics averaged across folds
-- Best model selection based on mean validation accuracy
-
 ### 3. Model Deployment
 - FastAPI-based model serving
 - RESTful API endpoints
 - Input validation and error handling
 - Automatic model loading from registry
 
+#### API Endpoints
+- **Prediction**: 
+  - `/predict`: Upload an image for classification
+  - Returns prediction, confidence score, class name, and class probabilities
+- **Health & Monitoring**:
+  - `/health`: Check service health and model configuration
+  - `/metrics`: View current performance metrics
+  - `/metrics/names`: Get list of available metrics
+  - `/metrics/history`: Get historical values for a specific metric
+  - `/predictions/summary`: Get summary of recent predictions
+  - `/alerts`: View recent alerts for model drift or issues
+  - `/model-info`: Get information about the current model
+- **Feedback**:
+  - `/feedback`: Submit ground truth for a prediction for monitoring
+
 ### 4. Performance Monitoring
-- Real-time prediction logging
-- Performance metric calculation
-- Drift detection
-- Alert system for model degradation
+- Real-time prediction logging in SQLite database
+- Performance metric calculation without requiring ground truth
+- Enhanced drift detection between prediction windows
+- Comprehensive alert system for model degradation
 
 #### Drift Detection Methodology
 - **Performance Drift**:
-  - Window size: 1000 predictions
-  - Threshold: 0.05 (5% degradation)
+  - Window size: 100 predictions
+  - Thresholds: 
+    - Confidence: 0.05 (5% change)
+    - Distribution: 0.2 (20% change)
   - Metrics monitored:
-    - Accuracy drift
-    - Confidence distribution drift
-    - Prediction distribution drift
+    - Confidence drift (mean confidence change)
+    - Prediction distribution drift (class distribution change)
 
-- **Statistical Tests**:
-  - Kolmogorov-Smirnov test for distribution changes
-  - Chi-square test for categorical drift
-  - Z-score for mean shift detection
+#### Monitoring Metrics
+- **Prediction-Based Metrics** (no ground truth required):
+  - Total predictions
+  - Average confidence
+  - Min/max confidence
+  - Class distribution
+  - Prediction timing
 
-- **Alert Thresholds**:
-  - Warning: > 5% degradation
-  - Critical: > 10% degradation
-  - Immediate action: > 20% degradation
+- **Performance Metrics** (when ground truth available):
+  - Accuracy
+  - Precision
+  - Recall
+  - F1-score
 
-- **Monitoring Windows**:
-  - Short-term: Last 1000 predictions
-  - Medium-term: Last 10000 predictions
-  - Long-term: All predictions
+#### Database Structure
+- **Predictions Table**: Stores all predictions with metadata
+- **Metrics Table**: Stores calculated metrics over time
+- **Alerts Table**: Stores detected issues and alerts
 
 ### 5. Model Registry
 - MLflow Model Registry integration
@@ -125,8 +139,8 @@ mlflow server --host 0.0.0.0 --port 5000
 # Run hyperparameter tuning
 python hyperopt_tuning.py
 
-# Train model with specific parameters
-python train_cnn.py
+# Register the best model
+python model_registry.py
 ```
 
 ### Model Serving
@@ -135,74 +149,69 @@ python train_cnn.py
 python serve_model.py
 ```
 
-The API will be available at `http://localhost:8000` with the following endpoints:
-- `/predict`: Make predictions on images
-- `/health`: Check service health
-- `/metrics`: View performance metrics
-- `/alerts`: View recent alerts
-- `/model-info`: Get information about the current model
+The API will be available at `http://localhost:8000`
 
-### Model Registry
-```python
-from model_registry import ModelRegistry
-
-# Initialize registry
-registry = ModelRegistry()
-
-# Register best model
-version = registry.register_best_model(
-    experiment_name="hyperopt_tuning",
-    metric="mean_cv_accuracy"
-)
-
-# Transition to production
-registry.transition_model_stage(version, "Production")
+### Making Predictions
+```bash
+# Using curl
+curl -X POST "http://localhost:8000/predict" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "file=@path/to/your/image.jpg"
+     
+# Response format
+{
+  "prediction": 0,
+  "confidence": 0.96,
+  "class_name": "class_0",
+  "probabilities": {
+    "class_0": 0.96,
+    "class_1": 0.04
+  }
+}
 ```
 
-### Monitoring
-```python
-from monitoring import ModelMonitor
+### Checking Metrics
+```bash
+# Get current metrics
+curl http://localhost:8000/metrics
 
-# Initialize monitor
-monitor = ModelMonitor()
+# Get metric names
+curl http://localhost:8000/metrics/names
 
-# View metrics
-metrics = monitor.calculate_metrics()
+# Get historical values for a specific metric
+curl http://localhost:8000/metrics/history?metric_name=avg_confidence&limit=10
 
-# Check for drift
-drift = monitor.detect_drift()
+# Get prediction summary
+curl http://localhost:8000/predictions/summary?limit=10
 
-# Plot metrics
-monitor.plot_metrics('accuracy')
+# Get alerts
+curl http://localhost:8000/alerts?limit=10
+```
+
+### Providing Feedback
+```bash
+# Submit ground truth for a prediction
+curl -X POST "http://localhost:8000/feedback?prediction_id=1&correct_label=0&notes=good+prediction"
 ```
 
 ## Project Structure
 ```
 .
 ├── hyperopt_tuning.py    # Hyperparameter tuning implementation
-├── train_cnn.py         # Model training script
-├── experiment.py        # Experiment tracking and execution
-├── training_utils.py    # Core training and validation functions
-├── serve_model.py       # FastAPI model serving
-├── model_registry.py    # MLflow Model Registry integration
-├── monitoring.py        # Performance monitoring system
-├── requirements.txt     # Project dependencies
-└── README.md           # Project documentation
+├── model_registry.py     # MLflow Model Registry integration
+├── monitoring.py         # Performance monitoring system
+├── serve_model.py        # FastAPI model serving
+├── requirements.txt      # Project dependencies
+└── README.md             # Project documentation
 ```
 
-### Code Organization
+## Code Organization
 The project follows a modular design pattern:
-- `training_utils.py`: Contains core training functions (`train_one_epoch` and `validate`) used across different modules
-- `experiment.py`: Manages experiment execution and MLflow tracking
-- `train_cnn.py`: Handles model training with configurable parameters
-- `hyperopt_tuning.py`: Implements hyperparameter optimization
-
-## Contributing
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+- `hyperopt_tuning.py`: Implements hyperparameter optimization with train/val split
+- `model_registry.py`: Handles model registration, versioning, and stage transitions
+- `monitoring.py`: Provides comprehensive model monitoring and drift detection
+- `serve_model.py`: Implements FastAPI app with prediction and monitoring endpoints
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details. 
