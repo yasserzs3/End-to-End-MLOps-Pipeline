@@ -13,6 +13,8 @@ import os
 from monitoring import ModelMonitor
 from model_registry import ModelRegistry
 import json
+import sqlite3
+import pandas as pd
 
 app = FastAPI(
     title="Image Classification API",
@@ -157,7 +159,9 @@ async def predict(file: UploadFile = File(...)):
             features={
                 "filename": file.filename,
                 "file_size": len(contents),
-                "content_type": file.content_type
+                "content_type": file.content_type,
+                "probabilities": json.dumps(class_probs),
+                "model_version": registry.get_model_details()["version"]
             }
         )
         
@@ -167,7 +171,8 @@ async def predict(file: UploadFile = File(...)):
             monitor.generate_alert(
                 alert_type="DRIFT_DETECTED",
                 message=f"Model drift detected: {', '.join(drift_indicators['reasons'])}",
-                severity="WARNING"
+                severity="WARNING",
+                additional_data=drift_indicators['metrics'] if 'metrics' in drift_indicators else None
             )
         
         return PredictionResponse(
@@ -231,6 +236,132 @@ async def get_model_info():
         raise HTTPException(
             status_code=500,
             detail=f"Error retrieving model info: {str(e)}"
+        )
+
+@app.get("/metrics/history")
+async def get_metrics_history(metric_name: str, limit: int = 10):
+    """Get historical values for a specific metric."""
+    try:
+        conn = sqlite3.connect("model_monitoring.db")
+        query = f'''
+        SELECT timestamp, metric_value
+        FROM metrics
+        WHERE metric_name = ?
+        ORDER BY timestamp DESC
+        LIMIT {limit}
+        '''
+        
+        df = pd.read_sql_query(query, conn, params=(metric_name,))
+        conn.close()
+        
+        if df.empty:
+            return []
+            
+        # Convert timestamp to string for JSON serialization
+        df['timestamp'] = df['timestamp'].astype(str)
+        return df.to_dict(orient='records')
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving metrics history: {str(e)}"
+        )
+
+@app.get("/metrics/names")
+async def get_metric_names():
+    """Get the names of all available metrics."""
+    try:
+        conn = sqlite3.connect("model_monitoring.db")
+        query = '''
+        SELECT DISTINCT metric_name
+        FROM metrics
+        ORDER BY metric_name
+        '''
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        return {"metric_names": df['metric_name'].tolist()}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving metric names: {str(e)}"
+        )
+
+@app.get("/predictions/summary")
+async def get_predictions_summary(limit: int = 100):
+    """Get a summary of recent predictions."""
+    try:
+        conn = sqlite3.connect("model_monitoring.db")
+        query = f'''
+        SELECT timestamp, prediction, confidence
+        FROM predictions
+        ORDER BY timestamp DESC
+        LIMIT {limit}
+        '''
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        if df.empty:
+            return {"count": 0, "predictions": []}
+            
+        # Convert timestamp to string for JSON serialization
+        df['timestamp'] = df['timestamp'].astype(str)
+        
+        return {
+            "count": len(df),
+            "avg_confidence": float(df['confidence'].mean()),
+            "predictions": df.to_dict(orient='records')
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving predictions summary: {str(e)}"
+        )
+
+@app.post("/feedback")
+async def record_feedback(prediction_id: int, correct_label: int, notes: str = None):
+    """Record feedback for a prediction (update ground truth)."""
+    try:
+        conn = sqlite3.connect("model_monitoring.db")
+        cursor = conn.cursor()
+        
+        # Update the prediction with ground truth
+        cursor.execute('''
+        UPDATE predictions
+        SET ground_truth = ?
+        WHERE id = ?
+        ''', (correct_label, prediction_id))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(
+                status_code=404,
+                detail=f"Prediction with ID {prediction_id} not found"
+            )
+            
+        conn.commit()
+        conn.close()
+        
+        # Generate an alert if this is feedback
+        monitor.generate_alert(
+            alert_type="FEEDBACK_RECEIVED",
+            message=f"Ground truth updated for prediction {prediction_id}: {correct_label}",
+            severity="INFO",
+            additional_data={"notes": notes} if notes else None
+        )
+        
+        return {"status": "success", "message": f"Ground truth updated for prediction {prediction_id}"}
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error recording feedback: {str(e)}"
         )
 
 if __name__ == "__main__":

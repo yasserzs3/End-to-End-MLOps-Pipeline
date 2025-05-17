@@ -68,7 +68,8 @@ class ModelMonitor:
             timestamp DATETIME,
             alert_type TEXT,
             message TEXT,
-            severity TEXT
+            severity TEXT,
+            additional_data TEXT
         )
         ''')
         
@@ -119,34 +120,64 @@ class ModelMonitor:
         """
         conn = sqlite3.connect(self.db_path)
         
-        # Get recent predictions with ground truth
-        query = f'''
-        SELECT prediction, ground_truth
+        # Get all recent predictions regardless of ground truth
+        query_all = f'''
+        SELECT prediction, confidence, ground_truth, timestamp
         FROM predictions
-        WHERE ground_truth IS NOT NULL
         ORDER BY timestamp DESC
         LIMIT {window_size}
         '''
         
-        df = pd.read_sql_query(query, conn)
+        df_all = pd.read_sql_query(query_all, conn)
         
-        if len(df) == 0:
+        if len(df_all) == 0:
+            conn.close()
             return {}
         
+        # Calculate metrics that don't require ground truth
         metrics = {
-            'accuracy': accuracy_score(df['ground_truth'], df['prediction']),
-            'precision': precision_score(df['ground_truth'], df['prediction'], average='weighted'),
-            'recall': recall_score(df['ground_truth'], df['prediction'], average='weighted'),
-            'f1': f1_score(df['ground_truth'], df['prediction'], average='weighted')
+            'total_predictions': len(df_all),
+            'avg_confidence': float(df_all['confidence'].mean()),
+            'min_confidence': float(df_all['confidence'].min()),
+            'max_confidence': float(df_all['confidence'].max()),
+            'last_prediction_time': df_all['timestamp'].iloc[0],
+            'unique_classes': len(df_all['prediction'].unique())
         }
+        
+        # Add prediction distribution
+        class_counts = df_all['prediction'].value_counts().to_dict()
+        for class_id, count in class_counts.items():
+            metrics[f'class_{class_id}_count'] = count
+            metrics[f'class_{class_id}_pct'] = float(count / len(df_all))
+        
+        # If ground truth is available, calculate standard ML metrics
+        if 'ground_truth' in df_all.columns and df_all['ground_truth'].notna().any():
+            # Get only predictions with ground truth
+            df_with_truth = df_all.dropna(subset=['ground_truth'])
+            
+            if len(df_with_truth) > 0:
+                # Convert to integers for metrics calculation
+                y_true = df_with_truth['ground_truth'].astype(int)
+                y_pred = df_with_truth['prediction'].astype(int)
+                
+                # Calculate standard ML metrics
+                metrics.update({
+                    'accuracy': float(accuracy_score(y_true, y_pred)),
+                    'precision': float(precision_score(y_true, y_pred, average='weighted', zero_division=0)),
+                    'recall': float(recall_score(y_true, y_pred, average='weighted', zero_division=0)),
+                    'f1': float(f1_score(y_true, y_pred, average='weighted', zero_division=0)),
+                    'ground_truth_count': len(df_with_truth)
+                })
         
         # Log metrics to database
         cursor = conn.cursor()
         for metric_name, metric_value in metrics.items():
-            cursor.execute('''
-            INSERT INTO metrics (timestamp, metric_name, metric_value, window_size)
-            VALUES (?, ?, ?, ?)
-            ''', (datetime.now(), metric_name, metric_value, window_size))
+            # Skip non-numeric metrics for database storage
+            if isinstance(metric_value, (int, float)):
+                cursor.execute('''
+                INSERT INTO metrics (timestamp, metric_name, metric_value, window_size)
+                VALUES (?, ?, ?, ?)
+                ''', (datetime.now(), metric_name, metric_value, window_size))
         
         conn.commit()
         conn.close()
@@ -154,88 +185,97 @@ class ModelMonitor:
         return metrics
     
     def detect_drift(self, 
-                    window_size: int = 1000,
-                    threshold: float = 0.05) -> Dict[str, bool]:
+                    window_size: int = 100,
+                    confidence_threshold: float = 0.05,
+                    distribution_threshold: float = 0.2) -> Dict[str, bool]:
         """Detect drift in model performance and predictions.
         
         Args:
             window_size: Number of most recent predictions to consider
-            threshold: Threshold for drift detection
+            confidence_threshold: Threshold for confidence drift detection
+            distribution_threshold: Threshold for distribution drift detection
             
         Returns:
             Dictionary of drift indicators
         """
         conn = sqlite3.connect(self.db_path)
         
-        # Get recent predictions
-        query = f'''
-        SELECT prediction, confidence, ground_truth
+        # Get recent predictions for current window
+        current_query = f'''
+        SELECT prediction, confidence, timestamp
         FROM predictions
         ORDER BY timestamp DESC
         LIMIT {window_size}
         '''
         
-        df = pd.read_sql_query(query, conn)
+        # Get predictions for previous window
+        previous_query = f'''
+        SELECT prediction, confidence, timestamp
+        FROM predictions
+        ORDER BY timestamp DESC
+        LIMIT {window_size} OFFSET {window_size}
+        '''
         
-        if len(df) < window_size:
-            return {'drift_detected': False, 'reason': 'Insufficient data'}
+        df_current = pd.read_sql_query(current_query, conn)
+        df_previous = pd.read_sql_query(previous_query, conn)
         
         drift_indicators = {
             'drift_detected': False,
             'reasons': []
         }
         
-        # 1. Check for significant change in prediction distribution
-        if 'ground_truth' in df.columns and df['ground_truth'].notna().any():
-            recent_accuracy = accuracy_score(
-                df['ground_truth'].dropna(),
-                df['prediction'].loc[df['ground_truth'].notna()]
-            )
-            
-            # Get historical accuracy
-            cursor = conn.cursor()
-            cursor.execute('''
-            SELECT metric_value
-            FROM metrics
-            WHERE metric_name = 'accuracy'
-            ORDER BY timestamp DESC
-            LIMIT 1
-            ''')
-            result = cursor.fetchone()
-            
-            if result:
-                historical_accuracy = result[0]
-                if abs(recent_accuracy - historical_accuracy) > threshold:
-                    drift_indicators['drift_detected'] = True
-                    drift_indicators['reasons'].append(
-                        f'Accuracy drift: {abs(recent_accuracy - historical_accuracy):.3f}'
-                    )
+        # Need enough data for comparison
+        if len(df_current) < 5 or len(df_previous) < 5:
+            conn.close()
+            return {'drift_detected': False, 'reason': 'Insufficient data for drift detection'}
         
-        # 2. Check for significant change in confidence distribution
-        if 'confidence' in df.columns:
-            recent_conf_mean = df['confidence'].mean()
-            recent_conf_std = df['confidence'].std()
-            
-            # Get historical confidence stats
-            cursor.execute('''
-            SELECT AVG(confidence), STDDEV(confidence)
-            FROM predictions
-            WHERE timestamp < (
-                SELECT MIN(timestamp)
-                FROM predictions
-                ORDER BY timestamp DESC
-                LIMIT {window_size}
+        # 1. Check for change in average confidence
+        current_conf_mean = df_current['confidence'].mean()
+        previous_conf_mean = df_previous['confidence'].mean()
+        
+        conf_change = abs(current_conf_mean - previous_conf_mean)
+        if conf_change > confidence_threshold:
+            drift_indicators['drift_detected'] = True
+            drift_indicators['reasons'].append(
+                f'Confidence drift: {conf_change:.4f} (threshold: {confidence_threshold})'
             )
-            ''')
-            result = cursor.fetchone()
-            
-            if result and result[0] is not None:
-                hist_conf_mean, hist_conf_std = result
-                if abs(recent_conf_mean - hist_conf_mean) > threshold:
-                    drift_indicators['drift_detected'] = True
-                    drift_indicators['reasons'].append(
-                        f'Confidence drift: {abs(recent_conf_mean - hist_conf_mean):.3f}'
-                    )
+        
+        # 2. Check for change in prediction distribution
+        current_dist = df_current['prediction'].value_counts(normalize=True).to_dict()
+        previous_dist = df_previous['prediction'].value_counts(normalize=True).to_dict()
+        
+        # Calculate JS divergence between distributions
+        all_classes = set(list(current_dist.keys()) + list(previous_dist.keys()))
+        
+        # Fill missing classes with 0
+        for class_id in all_classes:
+            if class_id not in current_dist:
+                current_dist[class_id] = 0
+            if class_id not in previous_dist:
+                previous_dist[class_id] = 0
+        
+        # Sort dictionaries by keys for consistent comparison
+        current_values = [current_dist[k] for k in sorted(current_dist.keys())]
+        previous_values = [previous_dist[k] for k in sorted(previous_dist.keys())]
+        
+        # Simple distribution difference metric (mean absolute difference)
+        dist_change = sum(abs(c - p) for c, p in zip(current_values, previous_values)) / len(all_classes)
+        
+        if dist_change > distribution_threshold:
+            drift_indicators['drift_detected'] = True
+            drift_indicators['reasons'].append(
+                f'Distribution drift: {dist_change:.4f} (threshold: {distribution_threshold})'
+            )
+        
+        # 3. Add metrics for monitoring
+        drift_indicators['metrics'] = {
+            'confidence_change': conf_change,
+            'distribution_change': dist_change,
+            'current_window_size': len(df_current),
+            'previous_window_size': len(df_previous),
+            'current_confidence_mean': current_conf_mean,
+            'previous_confidence_mean': previous_conf_mean,
+        }
         
         conn.close()
         return drift_indicators
@@ -243,27 +283,49 @@ class ModelMonitor:
     def generate_alert(self, 
                       alert_type: str,
                       message: str,
-                      severity: str = "WARNING"):
+                      severity: str = "WARNING",
+                      additional_data: Dict = None):
         """Generate an alert.
         
         Args:
             alert_type: Type of alert
             message: Alert message
             severity: Alert severity (INFO, WARNING, ERROR)
+            additional_data: Additional data to store with the alert
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        timestamp = datetime.now()
+        
+        # Store additional data as JSON if provided
+        data_json = None
+        if additional_data:
+            data_json = json.dumps(additional_data)
+        
+        # Make sure the alerts table has the additional_data column
+        try:
+            cursor.execute("SELECT additional_data FROM alerts LIMIT 1")
+        except sqlite3.OperationalError:
+            # Add additional_data column if it doesn't exist
+            cursor.execute("ALTER TABLE alerts ADD COLUMN additional_data TEXT")
+        
         cursor.execute('''
-        INSERT INTO alerts (timestamp, alert_type, message, severity)
-        VALUES (?, ?, ?, ?)
-        ''', (datetime.now(), alert_type, message, severity))
+        INSERT INTO alerts (timestamp, alert_type, message, severity, additional_data)
+        VALUES (?, ?, ?, ?, ?)
+        ''', (timestamp, alert_type, message, severity, data_json))
         
         conn.commit()
         conn.close()
         
         # Log alert
-        logger.warning(f"Alert: {alert_type} - {message} (Severity: {severity})")
+        log_level = {
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR
+        }.get(severity, logging.WARNING)
+        
+        logger.log(log_level, f"Alert: {alert_type} - {message} (Severity: {severity})")
     
     def plot_metrics(self, 
                     metric_name: str,
