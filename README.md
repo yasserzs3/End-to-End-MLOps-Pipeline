@@ -36,21 +36,19 @@ This project implements a complete MLOps pipeline for image classification, feat
 
 #### Hyperparameter Search Space
 - **Model Architecture**:
-  - Learning rate: [1e-5, 1e-3] (log scale)
-  - Batch size: [16, 32, 64, 128]
-  - Number of epochs: [10, 50]
-  - Image size: [96, 128, 224]
-  - Model type: ['simple_cnn', 'resnet18', 'resnet18_backbone']
-- **Optimization**:
-  - Optimizer: ['adam', 'sgd']
-  - Weight decay: [0, 1e-4, 1e-3]
-  - Momentum (for SGD): [0.9, 0.99]
-- **Regularization**:
-  - Dropout rate: [0.1, 0.5]
-  - Data augmentation intensity: [0.1, 0.5]
-- **Early Stopping**:
-  - Patience: [3, 10]
-  - Min delta: [1e-4, 1e-3]
+  - Learning rate: [1e-5, 1e-1] (log scale)
+  - Batch size: [16, 32, 48, 64, 80, 96, 112, 128] (increments of 16)
+  - Number of epochs: [5, 10, 15, 20] (increments of 5)
+  - Image size: [64, 96, 128, 160, 192, 224, 256] (increments of 32)
+  - Model type: ['simple_cnn', 'resnet18_backbone']
+  - Transform type: ['transformed', 'augmented']
+  - Freeze backbone: True (fixed)
+
+#### Training Configuration
+- Simple train/validation split (80/20) with stratification
+- Early stopping with patience of 5 epochs
+- Model checkpointing with MLflow integration
+- Maximum number of hyperopt evaluations: 10 (configurable)
 
 ### 3. Model Deployment
 - FastAPI-based model serving
