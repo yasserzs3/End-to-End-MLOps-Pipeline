@@ -78,6 +78,7 @@ def objective(params):
         
         # Training loop with early stopping
         best_val_acc = 0
+        best_model_state = None
         patience = 5
         patience_counter = 0
         
@@ -94,6 +95,9 @@ def objective(params):
             # Early stopping check
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                best_model_state = model.state_dict()
+                # Save the best model to MLflow
+                mlflow.pytorch.log_model(model, 'model')
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -127,4 +131,4 @@ def run_hyperopt_tuning(max_evals=50):
     return best
 
 if __name__ == '__main__':
-    best_params = run_hyperopt_tuning(max_evals=5) 
+    best_params = run_hyperopt_tuning(max_evals=1) 
