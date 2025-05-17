@@ -131,4 +131,4 @@ def run_hyperopt_tuning(max_evals=50):
     return best
 
 if __name__ == '__main__':
-    best_params = run_hyperopt_tuning(max_evals=1) 
+    best_params = run_hyperopt_tuning(max_evals=10) 
